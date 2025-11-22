@@ -1,0 +1,62 @@
+;
+; NetworkMonitor.inf
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = System ; TODO: specify appropriate Class
+ClassGuid   = {4d36e97d-e325-11ce-bfc1-08002be10318} ; TODO: specify appropriate ClassGuid
+Provider    = %ManufacturerName%
+CatalogFile = NetworkMonitor.cat
+DriverVer   = ; TODO: set DriverVer in stampinf property pages
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+NetworkMonitor.sys = 1,,
+
+;*****************************************
+; Install Section
+;*****************************************
+
+[Manufacturer]
+%ManufacturerName% = Standard,NT$ARCH$.10.0...16299 ; %13% support introduced in build 16299
+
+[Standard.NT$ARCH$.10.0...16299]
+%NetworkMonitor.DeviceDesc% = NetworkMonitor_Device, Root\NetworkMonitor ; TODO: edit hw-id
+
+[NetworkMonitor_Device.NT]
+CopyFiles = File_Copy
+
+[File_Copy]
+NetworkMonitor.sys
+
+;-------------- Service installation
+[NetworkMonitor_Device.NT.Services]
+AddService = NetworkMonitor,%SPSVCINST_ASSOCSERVICE%, NetworkMonitor_Service_Inst
+
+; -------------- NetworkMonitor driver install sections
+[NetworkMonitor_Service_Inst]
+DisplayName    = %NetworkMonitor.SVCDESC%
+ServiceType    = 1               ; SERVICE_KERNEL_DRIVER
+StartType      = 3               ; SERVICE_DEMAND_START
+ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %13%\NetworkMonitor.sys
+
+[NetworkMonitor_Device.NT.Wdf]
+KmdfService = NetworkMonitor, NetworkMonitor_wdfsect
+
+[NetworkMonitor_wdfsect]
+KmdfLibraryVersion = $KMDFVERSION$
+
+[Strings]
+SPSVCINST_ASSOCSERVICE = 0x00000002
+ManufacturerName = "<Your manufacturer name>" ;TODO: Replace with your manufacturer name
+DiskName = "NetworkMonitor Installation Disk"
+NetworkMonitor.DeviceDesc = "NetworkMonitor Device"
+NetworkMonitor.SVCDESC = "NetworkMonitor Service"

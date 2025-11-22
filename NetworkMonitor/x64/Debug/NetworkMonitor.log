@@ -1,0 +1,11 @@
+﻿  Building 'NetworkMonitor' with toolset 'WindowsKernelModeDriver10.0' and the 'Universal' target platform.
+  Stamping x64\Debug\NetworkMonitor.inf
+  Stamping [Version] section with DriverVer=11/22/2025,13.3.7.83
+  DriverMain.cpp
+  NetworkMonitor.vcxproj -> Z:\Documents\Repositories\NetworkMonitor\x64\Debug\NetworkMonitor.sys
+  Done Adding Additional Store
+  Successfully signed: Z:\Documents\Repositories\NetworkMonitor\x64\Debug\NetworkMonitor.sys
+  
+  Driver is 'Universal'.
+  DrvCat task was skipped as there was no catalog file to process
+  
