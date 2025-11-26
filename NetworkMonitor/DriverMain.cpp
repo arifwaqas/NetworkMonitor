@@ -1,5 +1,7 @@
 extern "C" {
+#define NDIS630 1
 #include <ntddk.h>
+#include <initguid.h> // CREATE / ALLOCATE GUID RIGHT HERE
 #include <fwpmk.h>
 #include <fwpsk.h>
 
@@ -25,12 +27,11 @@ static GUID gCalloutKey =
 static UINT32 gCalloutId = 0;
 
 // Forward declarations for WFP callout callbacks.
-static VOID NTAPI
+static void NTAPI
 NetworkMonitorStreamClassifyFn(
     const FWPS_INCOMING_VALUES0* inFixedValues,
     const FWPS_INCOMING_METADATA_VALUES0* inMetaValues,
     VOID* layerData,
-    const VOID* classifyContext,
     const FWPS_FILTER0* filter,
     UINT64 flowContext,
     FWPS_CLASSIFY_OUT0* classifyOut
@@ -40,15 +41,52 @@ static NTSTATUS NTAPI
 NetworkMonitorStreamNotifyFn(
     FWPS_CALLOUT_NOTIFY_TYPE notifyType,
     const GUID* filterKey,
-    const FWPS_FILTER0* filter
+    FWPS_FILTER0* filter
     );
 
-static VOID NTAPI
+static void NTAPI
 NetworkMonitorStreamFlowDeleteFn(
     UINT16 layerId,
     UINT32 calloutId,
     UINT64 flowContext
     );
+
+// Add a filter to direct stream traffic to the callout.
+static NTSTATUS
+RegisterWfpFilter()
+{
+    NTSTATUS status;
+
+    FWPM_FILTER0 filter = { 0 };
+    FWPM_FILTER_CONDITION0 condition = { 0 };
+
+    filter.displayData.name = const_cast<wchar_t*>(L"NetworkMonitor Stream Filter");
+    filter.layerKey = FWPM_LAYER_STREAM_V4;
+    filter.subLayerKey = gSublayerKey;
+    filter.weight.type = FWP_EMPTY; // auto-weight.
+    filter.numFilterConditions = 1;
+    filter.filterCondition = &condition;
+    filter.action.type = FWP_ACTION_CALLOUT_INSPECTION;
+    filter.action.calloutKey = gCalloutKey;
+
+    // This condition will match all inbound TCP traffic.
+    condition.fieldKey = FWPM_CONDITION_IP_PROTOCOL;
+    condition.matchType = FWP_MATCH_EQUAL;
+    condition.conditionValue.type = FWP_UINT8;
+    condition.conditionValue.uint8 = IPPROTO_TCP;
+
+    status = FwpmFilterAdd0(gEngineHandle, &filter, nullptr, nullptr);
+    if (!NT_SUCCESS(status))
+    {
+        DbgPrintEx(DPFLTR_DEFAULT_ID, DPFLTR_ERROR_LEVEL,
+            "[NetworkMonitor] RegisterWfpFilter: FwpmFilterAdd0 failed, status=0x%08X\n",
+            status);
+        return status;
+    }
+
+    DbgPrintEx(DPFLTR_DEFAULT_ID, DPFLTR_INFO_LEVEL, "[NetworkMonitor] RegisterWfpFilter: filter added successfully\n");
+    return STATUS_SUCCESS;
+}
 
 // Register provider, sublayer, and callout with BFE and the base filtering engine.
 static NTSTATUS
@@ -65,7 +103,7 @@ RegisterWfpObjects()
     provider.displayData.name = const_cast<wchar_t*>(L"NetworkMonitor Provider");
 
     status = FwpmProviderAdd0(gEngineHandle, &provider, nullptr);
-    if (!NT_SUCCESS(status) && status != FWP_E_ALREADY_EXISTS)
+    if (!NT_SUCCESS(status) && status != STATUS_FWP_ALREADY_EXISTS)
     {
         DbgPrintEx(DPFLTR_DEFAULT_ID, DPFLTR_ERROR_LEVEL,
                    "[NetworkMonitor] RegisterWfpObjects: FwpmProviderAdd0 failed, status=0x%08X\n",
@@ -75,11 +113,11 @@ RegisterWfpObjects()
 
     subLayer.subLayerKey = gSublayerKey;
     subLayer.displayData.name = const_cast<wchar_t*>(L"NetworkMonitor Sublayer");
-    subLayer.providerKey = gProviderKey;
+    subLayer.providerKey = &gProviderKey;
     subLayer.weight = 0x100;
 
     status = FwpmSubLayerAdd0(gEngineHandle, &subLayer, nullptr);
-    if (!NT_SUCCESS(status) && status != FWP_E_ALREADY_EXISTS)
+    if (!NT_SUCCESS(status) && status != STATUS_FWP_ALREADY_EXISTS)
     {
         DbgPrintEx(DPFLTR_DEFAULT_ID, DPFLTR_ERROR_LEVEL,
                    "[NetworkMonitor] RegisterWfpObjects: FwpmSubLayerAdd0 failed, status=0x%08X\n",
@@ -130,7 +168,16 @@ RegisterWfpObjects()
     DbgPrintEx(DPFLTR_DEFAULT_ID, DPFLTR_INFO_LEVEL,
                "[NetworkMonitor] RegisterWfpObjects: callout registered (id=%u)\n",
                gCalloutId);
-
+    
+    status = RegisterWfpFilter();
+    if (!NT_SUCCESS(status))
+    {
+        DbgPrintEx(DPFLTR_DEFAULT_ID, DPFLTR_ERROR_LEVEL,
+            "[NetworkMonitor] RegisterWfpObjects: RegisterWfpFilter failed, status=0x%08X\n",
+            status);
+        // UnregisterWfpObjects will clean up the callout
+        return status;
+    }
     return STATUS_SUCCESS;
 }
 
@@ -140,6 +187,8 @@ UnregisterWfpObjects()
 {
     if (gEngineHandle != nullptr)
     {
+        // The filter is deleted automatically when the provider is deleted.
+        // No need to explicitly call FwpmFilterDeleteByKey0.
         (void)FwpmCalloutDeleteByKey0(gEngineHandle, &gCalloutKey);
         (void)FwpmSubLayerDeleteByKey0(gEngineHandle, &gSublayerKey);
         (void)FwpmProviderDeleteByKey0(gEngineHandle, &gProviderKey);
@@ -260,12 +309,11 @@ DriverUnload(
 }
 
 // Stream callout classify callback for FWPM_LAYER_STREAM_V4.
-static VOID NTAPI
+static void NTAPI
 NetworkMonitorStreamClassifyFn(
     const FWPS_INCOMING_VALUES0* inFixedValues,
     const FWPS_INCOMING_METADATA_VALUES0* inMetaValues,
     VOID* layerData,
-    const VOID* classifyContext,
     const FWPS_FILTER0* filter,
     UINT64 flowContext,
     FWPS_CLASSIFY_OUT0* classifyOut
@@ -274,7 +322,6 @@ NetworkMonitorStreamClassifyFn(
     UNREFERENCED_PARAMETER(inFixedValues);
     UNREFERENCED_PARAMETER(inMetaValues);
     UNREFERENCED_PARAMETER(layerData);
-    UNREFERENCED_PARAMETER(classifyContext);
     UNREFERENCED_PARAMETER(filter);
     UNREFERENCED_PARAMETER(flowContext);
 
@@ -292,7 +339,7 @@ static NTSTATUS NTAPI
 NetworkMonitorStreamNotifyFn(
     FWPS_CALLOUT_NOTIFY_TYPE notifyType,
     const GUID* filterKey,
-    const FWPS_FILTER0* filter
+    FWPS_FILTER0* filter
     )
 {
     UNREFERENCED_PARAMETER(filterKey);
@@ -306,7 +353,7 @@ NetworkMonitorStreamNotifyFn(
 }
 
 // Flow delete callback for stream flows.
-static VOID NTAPI
+static void NTAPI
 NetworkMonitorStreamFlowDeleteFn(
     UINT16 layerId,
     UINT32 calloutId,
